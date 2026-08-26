@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -9,9 +9,37 @@ const client = new Client({
     ]
 });
 
-client.once('ready', () => {
+// تعريف أوامر السلاش (Slash Commands) عشان تظهر في القائمة المنسدلة
+const commands = [
+    new SlashCommandBuilder().setName('help').setDescription('عرض قائمة أوامر البوت'),
+    new SlashCommandBuilder().setName('ticket').setDescription('إرسال لوحة فتح التذاكر (للإدارة)'),
+    new SlashCommandBuilder()
+        .setName('warn')
+        .setDescription('تحذير عضو مخالف')
+        .addUserOption(option => option.setName('user').setDescription('العضو المراد تحذيره').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('سبب التحذير').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('clear')
+        .setDescription('مسح الرسائل من الشات')
+        .addIntegerOption(option => option.setName('count').setDescription('عدد الرسائل (من 1 إلى 99)').setRequired(true))
+].map(command => command.toJSON());
+
+client.once('ready', async () => {
     console.log(`✅ تم تسجيل الدخول بنجاح باسم: ${client.user.tag}`);
-    client.user.setActivity('§help لأوامر البوت', { type: 3 });
+    client.user.setActivity('/help أو §help', { type: 3 });
+
+    // تسجيل أوامر السلاش تلقائياً في ديسكورد
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+        console.log('🔄 جاري تحديث أوامر السلاش (Slash Commands)...');
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+        console.log('✅ تم تسجيل أوامر السلاش بنجاح!');
+    } catch (error) {
+        console.error(error);
+    }
 });
 
 // ترحيب الأعضاء الجدد
@@ -21,6 +49,9 @@ client.on('guildMemberAdd', member => {
     channel.send(`🎉 أهلاً بك يا ${member} في السيرفر! نورتنا يا ملك! 👑`);
 });
 
+// ==========================================
+// 1. نظام الأوامر العادية واختصارات ( § )
+// ==========================================
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -30,47 +61,24 @@ client.on('messageCreate', async message => {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // 1. أمر المساعدة (Help)
     if (command === 'help') {
-        return message.reply(`
-📜 **قائمة أوامر بوت amirKING-warns:**
-• \`§warn @User [السبب]\` - لتحذير عضو مخالف.
-• \`§kick @User [السبب]\` - لطرد عضو من السيرفر.
-• \`§ban @User [السبب]\` - لحظر عضو من السيرفر.
-• \`§clear [عدد]\` - لمسح الرسائل (من 1 إلى 99).
-• \`§ticket\` - لإرسال لوحة فتح التذاكر (للإدارة).
-        `);
+        return message.reply(`📜 **أوامر بوت amirKING-warns:**\n• \`§warn\` أو \`/warn\` - تحذير عضو\n• \`§clear\` أو \`/clear\` - مسح الرسائل\n• \`§ticket\` أو \`/ticket\` - لوحة التذاكر`);
     }
 
-    // 2. أمر إرسال لوحة التذاكر (Ticket Setup)
     if (command === 'ticket') {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply('❌ هذا الأمر خاص بالمسؤولين فقط (Administrator)!');
-        }
-
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply('❌ للـ المسؤولين فقط!');
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('create_ticket')
-                .setLabel('🎫 فتح تذكرة جديدة')
-                .setStyle(ButtonStyle.Primary)
+            new ButtonBuilder().setCustomId('create_ticket').setLabel('🎫 فتح تذكرة جديدة').setStyle(ButtonStyle.Primary)
         );
-
-        await message.channel.send({
-            content: '🎟️ **نظام التذاكر والدعم الفني:**\nاضغط على الزر أدناه لفتح تذكرة جديدة للتواصل مع الإدارة.',
-            components: [row]
-        });
-        
-        return message.delete().catch(() => {}); // حذف رسالة الأمر لتكون القناة مرتبة
+        await message.channel.send({ content: '🎟️ **نظام التذاكر والدعم الفني:**\nاضغط على الزر أدناه لفتح تذكرة:', components: [row] });
+        return message.delete().catch(() => {});
     }
 
-    // 3. أوامر الإدارة (Warn, Kick, Ban, Clear) نفس الكود السابق
     if (command === 'warn') {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-            return message.reply('❌ ما عندك صلاحية لتحذير الأعضاء!');
-        }
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return message.reply('❌ ليس لديك صلاحية!');
         const target = message.mentions.members.first();
         const reason = args.slice(1).join(' ') || 'بدون سبب';
-        if (!target) return message.reply('⚠️ يرجى منشن الشخص المراد تحذيره!');
+        if (!target) return message.reply('⚠️ يرجى منشن العضو!');
         return message.reply(`✅ تم تحذير العضو ${target.user.tag} بنجاح!\n📝 **السبب:** ${reason}`);
     }
 
@@ -84,63 +92,89 @@ client.on('messageCreate', async message => {
     }
 });
 
-// التفاعل مع الأزرار (فتح وإغلاق التذاكر)
+// ==========================================
+// 2. نظام أوامر السلاش ( Slash Commands / ) والأزرار
+// ==========================================
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
+    // معالجة أوامر السلاش
+    if (interaction.isChatInputCommand()) {
+        const { commandName } = interaction;
 
-    // عند الضغط على زر فتح تذكرة
-    if (interaction.customId === 'create_ticket') {
-        const guild = interaction.guild;
-        const member = interaction.member;
+        if (commandName === 'help') {
+            return interaction.reply({ content: '📜 **قائمة أوامر البوت:**\n• `/warn` أو `§warn`\n• `/clear` أو `§clear`\n• `/ticket` أو `§ticket`', ephemeral: true });
+        }
 
-        // منع فتح أكثر من تذكرة لنفس المستخدم (اختياري) أو إنشاء قناة جديدة مباشرة
-        const channelName = `ticket-${member.user.username}`;
-        
-        try {
-            const ticketChannel = await guild.channels.create({
-                name: channelName,
-                type: ChannelType.GuildText,
-                permissionOverwrites: [
-                    {
-                        id: guild.id, // منع الجميع من رؤية القناة
-                        deny: [PermissionsBitField.Flags.ViewChannel],
-                    },
-                    {
-                        id: member.id, // السماح لصاحب التذكرة برؤيتها والكتابة فيها
-                        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
-                    },
-                    {
-                        id: client.user.id, // السماح للبوت
-                        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels],
-                    }
-                ],
-            });
-
-            const closeRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('close_ticket')
-                    .setLabel('🔒 إغلاق التذكرة')
-                    .setStyle(ButtonStyle.Danger)
+        if (commandName === 'ticket') {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                return interaction.reply({ content: '❌ هذا الأمر خاص بالمسؤولين فقط!', ephemeral: true });
+            }
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('create_ticket').setLabel('🎫 فتح تذكرة جديدة').setStyle(ButtonStyle.Primary)
             );
+            await interaction.reply({ content: '🎟️ **نظام التذاكر:** اضغط على الزر أدناه:', components: [row] });
+        }
 
-            await ticketChannel.send({
-                content: `مرحباً ${member} 👋\nطرحت إدارتنا هنا لمساعدتك. يرجى كتابة مشكلتك أو استفسارك بالتفصيل وسيقوم أحد المسؤولين بالرد عليك قريباً.`,
-                components: [closeRow]
-            });
+        if (commandName === 'warn') {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لتحذير الأعضاء!', ephemeral: true });
+            }
+            const target = interaction.options.getMember('user');
+            const reason = interaction.options.getString('reason') || 'بدون سبب';
+            
+            return interaction.reply(`✅ تم تحذير العضو ${target.user.tag} بنجاح!\n📝 **السبب:** ${reason}`);
+        }
 
-            return interaction.reply({ content: `✅ تم إنشاء تذكرتك بنجاح: ${ticketChannel}`, ephemeral: true });
-        } catch (error) {
-            return interaction.reply({ content: '❌ حدث خطأ أثناء إنشاء التذكرة.', ephemeral: true });
+        if (commandName === 'clear') {
+            if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لمسح الرسائل!', ephemeral: true });
+            }
+            const count = interaction.options.getInteger('count');
+            if (count < 1 || count > 99) {
+                return interaction.reply({ content: '⚠️ يرجى تحديد عدد بين 1 و 99', ephemeral: true });
+            }
+            await interaction.channel.bulkDelete(count + 1, true);
+            return interaction.reply({ content: `🧹 تم مسح **${count}** رسالة بنجاح!`, ephemeral: true });
         }
     }
 
-    // عند الضغط على زر إغلاق التذكرة
-    if (interaction.customId === 'close_ticket') {
-        const channel = interaction.channel;
-        await interaction.reply({ content: '🔒 جاري إغلاق وحذف التذكرة خلال 5 ثوانٍ...' });
-        setTimeout(() => {
-            channel.delete().catch(() => {});
-        }, 5000);
+    // معالجة الأزرار (فتح وإغلاق التذاكر)
+    if (interaction.isButton()) {
+        if (interaction.customId === 'create_ticket') {
+            const guild = interaction.guild;
+            const member = interaction.member;
+            const channelName = `ticket-${member.user.username}`;
+            
+            try {
+                const ticketChannel = await guild.channels.create({
+                    name: channelName,
+                    type: ChannelType.GuildText,
+                    permissionOverwrites: [
+                        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+                        { id: member.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+                        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels] }
+                    ],
+                });
+
+                const closeRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('close_ticket').setLabel('🔒 إغلاق التذكرة').setStyle(ButtonStyle.Danger)
+                );
+
+                await ticketChannel.send({
+                    content: `مرحباً ${member} 👋\nطرحت إدارتنا هنا لمساعدتك. يرجى كتابة مشكلتك بالتفصيل.`,
+                    components: [closeRow]
+                });
+
+                return interaction.reply({ content: `✅ تم إنشاء تذكرتك بنجاح: ${ticketChannel}`, ephemeral: true });
+            } catch (error) {
+                return interaction.reply({ content: '❌ حدث خطأ أثناء إنشاء التذكرة.', ephemeral: true });
+            }
+        }
+
+        if (interaction.customId === 'close_ticket') {
+            const channel = interaction.channel;
+            await interaction.reply({ content: '🔒 جاري إغلاق وحذف التذكرة خلال 5 ثوانٍ...' });
+            setTimeout(() => channel.delete().catch(() => {}), 5000);
+        }
     }
 });
 
